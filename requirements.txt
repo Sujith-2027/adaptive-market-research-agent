@@ -1,0 +1,9 @@
+openai
+pandas
+openpyxl
+requests
+beautifulsoup4
+ddgs
+tavily-python
+python-dotenv
+streamlit
