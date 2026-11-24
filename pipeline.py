@@ -81,6 +81,7 @@ PROFILE: {json.dumps(prof, default=str)[:3000]}""")
 # ---------- Normalize ----------
 def normalize(df, btype, prof, key_columns=None):
     log, df = [], df.copy()
+    currency = None
     try:
         m = llm_json(f"""Business type: {btype}. Map each raw column name to a canonical snake_case name
 (for example "Ord Dt" -> "order_date"). Keep names short and unique.
@@ -111,6 +112,9 @@ COLUMNS: {json.dumps(prof['columns'], default=str)[:3000]}""")
         df[c] = df[c].map(lambda x: re.sub(r"\s+", " ", x).strip() if isinstance(x, str) else x)
         nn = df[c].dropna().astype(str)
         if len(nn) and nn.str.match(NUM_RE).mean() >= 0.9:
+            sym = nn.str.extract(r"([₹$€£])")[0].dropna()
+            if len(sym) and currency is None:
+                currency = sym.mode()[0]
             df[c] = pd.to_numeric(df[c].astype(str).str.replace(r"[^\d.\-]", "", regex=True), errors="coerce")
             log.append(f"Converted '{c}' from text to numbers (symbols and commas removed)")
         elif any(h in c for h in ("date", "time")):
@@ -138,6 +142,7 @@ COLUMNS: {json.dumps(prof['columns'], default=str)[:3000]}""")
         p = df[c].isna().mean()
         if p > 0.2:
             log.append(f"Warning: '{c}' is {p:.0%} empty; results using it are less reliable")
+    df.attrs["currency"] = currency or "unknown"
     return df, log
 
 
@@ -159,7 +164,8 @@ def compute_stats(df, key_columns=None):
     text = [c for c in df.select_dtypes(exclude=["number", "datetime"]).columns if df[c].nunique() > 1]
     dims = ([c for c in key if c in text] +
             [c for c in text if c not in key and df[c].nunique() <= 30])[:5]
-    stats = {"rows": len(df), "columns": list(df.columns), "main_measure": measure}
+    stats = {"rows": len(df), "columns": list(df.columns), "main_measure": measure,
+             "currency_symbol": df.attrs.get("currency", "unknown")}
     charts, counts = {}, {}
     if num:
         stats["numeric_summary"] = df[num].describe().loc[["count", "mean", "min", "50%", "max"]].round(2).to_dict()
@@ -204,7 +210,7 @@ def compute_stats(df, key_columns=None):
 
 
 # ---------- Fetch external data ----------
-def plan_enrichment(btype, playbook, df):
+def plan_enrichment(btype, playbook, df, market=""):
     ents = []
     for c in df.columns:
         if any(h in c for h in ENTITY_HINTS) and _is_text(df[c]):
@@ -213,6 +219,8 @@ def plan_enrichment(btype, playbook, df):
 Business type: {btype}
 Wanted external facts: {playbook.get('external', [])}
 Entities seen in the data: {ents[:8]}
+Market or country stated by the user: {market or 'not stated'}. If it is not stated, do not assume a country;
+write global or generic queries. Add the market to a query only when it is stated.
 For each wanted fact decide if it is publicly findable. Write a short generic search query (max 8 words).
 Never include private data. Return a JSON list of objects with keys: metric, fetchable (true or false), query.""")
     return [p for p in plan if isinstance(p, dict) and "metric" in p][:4]
@@ -277,7 +285,7 @@ def enrich(plan, log):
 
 
 # ---------- Write, check, report ----------
-def write_findings(btype, playbook, stats, facts, missing):
+def write_findings(btype, playbook, stats, facts, missing, market=""):
     return llm(f"""You are a careful business analyst writing for non-technical readers.
 Business type: {btype}
 Questions to answer: {playbook.get('questions')}
@@ -298,6 +306,13 @@ Months listed under partial_months_do_not_compare are incomplete: mention them o
 never as a drop, decline or seasonal effect.
 When you give a range, use the actual minimum and maximum from the stats. Write citations exactly as
 [Web #id] with plain square brackets.
+Currency: stats.currency_symbol is the symbol found in the data. If it is "unknown", write amounts as plain
+numbers with no currency symbol and never assume $ or any other currency.
+Market: the user stated this market or country: {market or 'not stated'}. Connect a web fact to this business
+only if it clearly applies to that market; otherwise call it general context that may be for a different market.
+If the top group leads the next group by less than 10 percent, say the difference is small and do not
+recommend favoring one group.
+Use "Confidence: High" only for a direct readout of a number in the stats; use Medium for recommendations.
 Rules: use only numbers present above. If the data cannot answer a question, say so plainly.
 Never invent facts. Web facts never override the user's data; flag conflicts. Do not use em dashes.""",
                role="smart", max_tokens=2500)
@@ -315,7 +330,7 @@ ANALYSIS:
         return {"ok": True, "issues": []}
 
 
-def run_pipeline(df, btype, playbook, allow_web, log):
+def run_pipeline(df, btype, playbook, allow_web, log, market=""):
     log("Normalizer: cleaning and standardizing the data")
     df, clean_log = normalize(df, btype, profile(df), playbook.get("key_columns"))
     for m in clean_log:
@@ -329,14 +344,14 @@ def run_pipeline(df, btype, playbook, allow_web, log):
     if allow_web and playbook.get("external"):
         log("Planner: deciding what external data is worth fetching")
         try:
-            facts, unfetched = enrich(plan_enrichment(btype, playbook, df), log)
+            facts, unfetched = enrich(plan_enrichment(btype, playbook, df, market), log)
         except Exception as e:
             log(f"  - Web enrichment skipped: {e}")
     elif not allow_web:
         log("Web enrichment is turned off")
 
     log("Writer: drafting findings")
-    draft = write_findings(btype, playbook, stats, facts, missing)
+    draft = write_findings(btype, playbook, stats, facts, missing, market)
     log("Critic: checking claims against the evidence")
     verdict = critique(draft, stats, facts)
     if not verdict.get("ok") and verdict.get("issues"):

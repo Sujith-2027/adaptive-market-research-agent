@@ -13,6 +13,7 @@ st.caption("Upload your data. The agent detects your business type, cleans the d
 with st.sidebar:
     up = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls"])
     allow_web = st.toggle("Fetch external data from the web", value=True)
+    market = st.text_input("Market or country (optional)", "", help="Used to pick relevant web facts. Leave blank if unsure.")
     st.caption("Only the column profile (names, types, 3 sample values), summary statistics and generic "
                "search queries are sent to the AI model. Full rows are not.")
     st.caption(f"LLM calls this session: {USAGE['calls']} (cached: {USAGE['cached']})")
@@ -56,7 +57,7 @@ if st.button("Run analysis", type="primary"):
             trace.append(m)
             st.write(m)
         try:
-            res = run_pipeline(df, btype, pb, allow_web, log)
+            res = run_pipeline(df, btype, pb, allow_web, log, market.strip())
             res["trace"] = trace
             st.session_state.res = res
             status.update(label="Done", state="complete")

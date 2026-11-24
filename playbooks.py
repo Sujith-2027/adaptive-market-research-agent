@@ -10,15 +10,15 @@ BUILTIN = {
         "questions": ["Which cities and restaurants drive the most revenue?",
                       "How do delivery fees and ratings relate to order value?",
                       "What does the monthly trend show?"],
-        "external": ["typical commission rate charged to restaurants in India",
-                     "online food delivery market growth in India"],
+        "external": ["typical commission rate charged to restaurants by delivery platforms",
+                     "online food delivery market growth"],
     },
     "retail": {
         "key_columns": ["order_date", "product", "category", "quantity", "revenue", "region"],
         "questions": ["Which products and categories earn the most?",
                       "Which regions are strongest and weakest?",
                       "What does the sales trend over time show?"],
-        "external": ["retail sector growth rate India", "average retail profit margin by category"],
+        "external": ["retail sector growth rate", "average retail profit margin by category"],
     },
     "saas": {
         "key_columns": ["signup_date", "plan", "monthly_price", "churned", "region"],
