@@ -4,11 +4,13 @@ import streamlit as st
 from pipeline import load, profile, detect_type, run_pipeline
 from playbooks import get_playbook, save_playbook
 from llm import USAGE
+import dashboard as D
+import dash_ui
 
 st.set_page_config(page_title="Adaptive Market Research Agent", layout="wide")
 st.title("Adaptive Market Research Agent")
 st.caption("Upload your data. The agent detects your business type, cleans the data, adds web context when "
-           "needed, and writes a cited, plain-language analysis.")
+           "needed, and writes a cited, plain-language analysis. Then edit the report and dashboard by chat.")
 
 with st.sidebar:
     up = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls"])
@@ -58,25 +60,24 @@ if st.button("Run analysis", type="primary"):
             st.write(m)
         try:
             res = run_pipeline(df, btype, pb, allow_web, log, market.strip())
-            res["trace"] = trace
+            res["trace"], res["btype"] = trace, btype
             st.session_state.res = res
+            st.session_state.spec = D.default_spec(res["df"], res["stats"], btype)
+            st.session_state.report = res["report"]
+            st.session_state.undo, st.session_state.chat = [], []
             status.update(label="Done", state="complete")
         except Exception as e:
             status.update(label="Failed", state="error")
             st.error(f"Run failed: {e}")
 
 res = st.session_state.get("res")
-if res:
-    t1, t2, t3, t4, t5 = st.tabs(["Report", "Charts", "Clean data", "External data", "Agent trace"])
+if res and "spec" in st.session_state:
+    t1, t2, t3, t4, t5 = st.tabs(["Report", "Dashboard", "Clean data", "External data", "Agent trace"])
     with t1:
-        st.markdown(res["report"])
-        st.download_button("Download report (.md)", res["report"], "report.md")
+        st.markdown(st.session_state.report)
+        st.download_button("Download report (.md)", st.session_state.report, "report.md")
     with t2:
-        if not res["charts"]:
-            st.write("Not enough structure in this data to draw charts.")
-        for name, s in res["charts"].items():
-            st.subheader(name)
-            (st.line_chart if name.startswith("Monthly") else st.bar_chart)(s)
+        dash_ui.render(res, res.get("btype", btype))
     with t3:
         st.dataframe(res["df"])
         st.download_button("Download clean data (.csv)", res["df"].to_csv(index=False), "clean_data.csv")
